@@ -1,4 +1,6 @@
-# Fixes relative to upstream `nothings/stb`
+# Fixes relative to upstream [`nothings/stb`](https://github.com/nothings/stb)
+
+The fixes are relative to upstream stb_image as of commit [`013ac3beddff3dbffafd5177e7972067cd2b5083`](https://github.com/nothings/stb/commit/013ac3beddff3dbffafd5177e7972067cd2b5083).
 
 Each line is one behavioural change made to `include/stb_image.h`. Upstream references (issue `#nnnn`, `PR #nnnn`, `CVE-…`) point at public discussion of the same bug; if a line has no reference, the fix was found locally.
 

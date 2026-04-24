@@ -1387,8 +1387,10 @@ static FILE *stbi__fopen(char const *filename, char const *mode)
 
 STBIDEF stbi_uc *stbi_load(char const *filename, int *x, int *y, int *comp, int req_comp)
 {
-   FILE *f = stbi__fopen(filename, "rb");
+   FILE *f;
    unsigned char *result;
+   if (!filename) return stbi__errpuc("null filename", "Invalid argument");
+   f = stbi__fopen(filename, "rb");
    if (!f) return stbi__errpuc("can't fopen", "Unable to open file");
    result = stbi_load_from_file(f,x,y,comp,req_comp);
    fclose(f);
@@ -1399,6 +1401,11 @@ STBIDEF stbi_uc *stbi_load_from_file(FILE *f, int *x, int *y, int *comp, int req
 {
    unsigned char *result;
    stbi__context s;
+   int dummy_x, dummy_y, dummy_c;
+   if (!f) return stbi__errpuc("null file", "Invalid argument");
+   if (!x) x = &dummy_x;
+   if (!y) y = &dummy_y;
+   if (!comp) comp = &dummy_c;
    stbi__start_file(&s,f);
    result = stbi__load_and_postprocess_8bit(&s,x,y,comp,req_comp);
    if (result) {
@@ -1412,6 +1419,11 @@ STBIDEF stbi__uint16 *stbi_load_from_file_16(FILE *f, int *x, int *y, int *comp,
 {
    stbi__uint16 *result;
    stbi__context s;
+   int dummy_x, dummy_y, dummy_c;
+   if (!f) return (stbi__uint16 *) stbi__errpuc("null file", "Invalid argument");
+   if (!x) x = &dummy_x;
+   if (!y) y = &dummy_y;
+   if (!comp) comp = &dummy_c;
    stbi__start_file(&s,f);
    result = stbi__load_and_postprocess_16bit(&s,x,y,comp,req_comp);
    if (result) {
@@ -1423,8 +1435,10 @@ STBIDEF stbi__uint16 *stbi_load_from_file_16(FILE *f, int *x, int *y, int *comp,
 
 STBIDEF stbi_us *stbi_load_16(char const *filename, int *x, int *y, int *comp, int req_comp)
 {
-   FILE *f = stbi__fopen(filename, "rb");
+   FILE *f;
    stbi__uint16 *result;
+   if (!filename) return (stbi_us *) stbi__errpuc("null filename", "Invalid argument");
+   f = stbi__fopen(filename, "rb");
    if (!f) return (stbi_us *) stbi__errpuc("can't fopen", "Unable to open file");
    result = stbi_load_from_file_16(f,x,y,comp,req_comp);
    fclose(f);
@@ -1437,6 +1451,12 @@ STBIDEF stbi_us *stbi_load_16(char const *filename, int *x, int *y, int *comp, i
 STBIDEF stbi_us *stbi_load_16_from_memory(stbi_uc const *buffer, int len, int *x, int *y, int *channels_in_file, int desired_channels)
 {
    stbi__context s;
+   // decoders unconditionally dereference *x and *y on success; accept NULL
+   // outputs at the public API boundary by redirecting to local dummies.
+   int dummy_x, dummy_y, dummy_c;
+   if (!x) x = &dummy_x;
+   if (!y) y = &dummy_y;
+   if (!channels_in_file) channels_in_file = &dummy_c;
    stbi__start_mem(&s,buffer,len);
    return stbi__load_and_postprocess_16bit(&s,x,y,channels_in_file,desired_channels);
 }
@@ -1444,6 +1464,11 @@ STBIDEF stbi_us *stbi_load_16_from_memory(stbi_uc const *buffer, int len, int *x
 STBIDEF stbi_us *stbi_load_16_from_callbacks(stbi_io_callbacks const *clbk, void *user, int *x, int *y, int *channels_in_file, int desired_channels)
 {
    stbi__context s;
+   int dummy_x, dummy_y, dummy_c;
+   if (!clbk || !clbk->read || !clbk->skip || !clbk->eof) return NULL;
+   if (!x) x = &dummy_x;
+   if (!y) y = &dummy_y;
+   if (!channels_in_file) channels_in_file = &dummy_c;
    stbi__start_callbacks(&s, (stbi_io_callbacks *)clbk, user);
    return stbi__load_and_postprocess_16bit(&s,x,y,channels_in_file,desired_channels);
 }
@@ -1451,6 +1476,10 @@ STBIDEF stbi_us *stbi_load_16_from_callbacks(stbi_io_callbacks const *clbk, void
 STBIDEF stbi_uc *stbi_load_from_memory(stbi_uc const *buffer, int len, int *x, int *y, int *comp, int req_comp)
 {
    stbi__context s;
+   int dummy_x, dummy_y, dummy_c;
+   if (!x) x = &dummy_x;
+   if (!y) y = &dummy_y;
+   if (!comp) comp = &dummy_c;
    stbi__start_mem(&s,buffer,len);
    return stbi__load_and_postprocess_8bit(&s,x,y,comp,req_comp);
 }
@@ -1458,6 +1487,11 @@ STBIDEF stbi_uc *stbi_load_from_memory(stbi_uc const *buffer, int len, int *x, i
 STBIDEF stbi_uc *stbi_load_from_callbacks(stbi_io_callbacks const *clbk, void *user, int *x, int *y, int *comp, int req_comp)
 {
    stbi__context s;
+   int dummy_x, dummy_y, dummy_c;
+   if (!clbk || !clbk->read || !clbk->skip || !clbk->eof) return NULL;
+   if (!x) x = &dummy_x;
+   if (!y) y = &dummy_y;
+   if (!comp) comp = &dummy_c;
    stbi__start_callbacks(&s, (stbi_io_callbacks *) clbk, user);
    return stbi__load_and_postprocess_8bit(&s,x,y,comp,req_comp);
 }
@@ -1467,11 +1501,16 @@ STBIDEF stbi_uc *stbi_load_gif_from_memory(stbi_uc const *buffer, int len, int *
 {
    unsigned char *result;
    stbi__context s;
+   int dummy_x, dummy_y, dummy_z, dummy_c;
+   if (!x) x = &dummy_x;
+   if (!y) y = &dummy_y;
+   if (!z) z = &dummy_z;
+   if (!comp) comp = &dummy_c;
    stbi__start_mem(&s,buffer,len);
 
    result = (unsigned char*) stbi__load_gif_main(&s, delays, x, y, z, comp, req_comp);
-   if (stbi__vertically_flip_on_load) {
-      stbi__vertical_flip_slices( result, *x, *y, *z, *comp );
+   if (result && stbi__vertically_flip_on_load) {
+      stbi__vertical_flip_slices( result, *x, *y, *z, req_comp ? req_comp : *comp );
    }
 
    return result;
@@ -1500,6 +1539,10 @@ static float *stbi__loadf_main(stbi__context *s, int *x, int *y, int *comp, int 
 STBIDEF float *stbi_loadf_from_memory(stbi_uc const *buffer, int len, int *x, int *y, int *comp, int req_comp)
 {
    stbi__context s;
+   int dummy_x, dummy_y, dummy_c;
+   if (!x) x = &dummy_x;
+   if (!y) y = &dummy_y;
+   if (!comp) comp = &dummy_c;
    stbi__start_mem(&s,buffer,len);
    return stbi__loadf_main(&s,x,y,comp,req_comp);
 }
@@ -1507,6 +1550,11 @@ STBIDEF float *stbi_loadf_from_memory(stbi_uc const *buffer, int len, int *x, in
 STBIDEF float *stbi_loadf_from_callbacks(stbi_io_callbacks const *clbk, void *user, int *x, int *y, int *comp, int req_comp)
 {
    stbi__context s;
+   int dummy_x, dummy_y, dummy_c;
+   if (!clbk || !clbk->read || !clbk->skip || !clbk->eof) return NULL;
+   if (!x) x = &dummy_x;
+   if (!y) y = &dummy_y;
+   if (!comp) comp = &dummy_c;
    stbi__start_callbacks(&s, (stbi_io_callbacks *) clbk, user);
    return stbi__loadf_main(&s,x,y,comp,req_comp);
 }
@@ -1515,7 +1563,9 @@ STBIDEF float *stbi_loadf_from_callbacks(stbi_io_callbacks const *clbk, void *us
 STBIDEF float *stbi_loadf(char const *filename, int *x, int *y, int *comp, int req_comp)
 {
    float *result;
-   FILE *f = stbi__fopen(filename, "rb");
+   FILE *f;
+   if (!filename) return stbi__errpf("null filename", "Invalid argument");
+   f = stbi__fopen(filename, "rb");
    if (!f) return stbi__errpf("can't fopen", "Unable to open file");
    result = stbi_loadf_from_file(f,x,y,comp,req_comp);
    fclose(f);
@@ -1525,6 +1575,11 @@ STBIDEF float *stbi_loadf(char const *filename, int *x, int *y, int *comp, int r
 STBIDEF float *stbi_loadf_from_file(FILE *f, int *x, int *y, int *comp, int req_comp)
 {
    stbi__context s;
+   int dummy_x, dummy_y, dummy_c;
+   if (!f) return stbi__errpf("null file", "Invalid argument");
+   if (!x) x = &dummy_x;
+   if (!y) y = &dummy_y;
+   if (!comp) comp = &dummy_c;
    stbi__start_file(&s,f);
    return stbi__loadf_main(&s,x,y,comp,req_comp);
 }
@@ -1552,8 +1607,10 @@ STBIDEF int stbi_is_hdr_from_memory(stbi_uc const *buffer, int len)
 #ifndef STBI_NO_STDIO
 STBIDEF int      stbi_is_hdr          (char const *filename)
 {
-   FILE *f = stbi__fopen(filename, "rb");
+   FILE *f;
    int result=0;
+   if (!filename) return 0;
+   f = stbi__fopen(filename, "rb");
    if (f) {
       result = stbi_is_hdr_from_file(f);
       fclose(f);
@@ -1564,9 +1621,11 @@ STBIDEF int      stbi_is_hdr          (char const *filename)
 STBIDEF int stbi_is_hdr_from_file(FILE *f)
 {
    #ifndef STBI_NO_HDR
-   long pos = ftell(f);
+   long pos;
    int res;
    stbi__context s;
+   if (!f) return 0;
+   pos = ftell(f);
    stbi__start_file(&s,f);
    res = stbi__hdr_test(&s);
    fseek(f, pos, SEEK_SET);
@@ -1582,6 +1641,7 @@ STBIDEF int      stbi_is_hdr_from_callbacks(stbi_io_callbacks const *clbk, void 
 {
    #ifndef STBI_NO_HDR
    stbi__context s;
+   if (!clbk || !clbk->read || !clbk->skip || !clbk->eof) return 0;
    stbi__start_callbacks(&s, (stbi_io_callbacks *) clbk, user);
    return stbi__hdr_test(&s);
    #else
@@ -4416,6 +4476,10 @@ static int stbi__compute_huffman_codes(stbi__zbuf *a)
    stbi_uc lencodes[286+32+137];//padding for maximum single op
    stbi_uc codelength_sizes[19];
    int i,n;
+   // Zero-init so a static analyser can prove there's no read-before-write
+   // path, and as belt-and-suspenders against a bug in the loop below leaving
+   // an unreached slot uninitialized before stbi__zbuild_huffman consumes it.
+   memset(lencodes, 0, sizeof(lencodes));
 
    int hlit  = stbi__zreceive(a,5) + 257;
    int hdist = stbi__zreceive(a,5) + 1;
@@ -5206,6 +5270,10 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
 
    for (;;) {
       stbi__pngchunk c = stbi__get_chunk_header(s);
+      // PNG chunk length is 32 bits but the spec mandates values in [0, 2^31-1].
+      // Clamping here means `stbi__skip` etc. below never see a "negative" int
+      // from an implicit uint32->int conversion.
+      if (c.length > (stbi__uint32)INT_MAX) return stbi__err("chunk too large","Corrupt PNG");
       switch (c.type) {
          case STBI__PNG_TYPE('C','g','B','I'):
             is_iphone = 1;
@@ -6580,6 +6648,11 @@ static stbi_uc *stbi__pic_load_core(stbi__context *s,int width,int height,int *c
                      if (count > left)
                         count = (stbi_uc) left;
 
+                     // Require forward progress: a zero count would consume no
+                     // scanline bytes but would still perform the readval, so a
+                     // crafted stream of 0-counts could spin indefinitely.
+                     if (count == 0) return stbi__errpuc("bad file","zero run count");
+
                      if (!stbi__readval(s,packet->channel,value))  return 0;
 
                      for(i=0; i<count; ++i,dest+=4)
@@ -6604,6 +6677,8 @@ static stbi_uc *stbi__pic_load_core(stbi__context *s,int width,int height,int *c
                         count -= 127;
                      if (count > left)
                         return stbi__errpuc("bad file","scanline overrun");
+                     // forward-progress check: the extended 16-bit count can be zero.
+                     if (count == 0) return stbi__errpuc("bad file","zero run count");
 
                      if (!stbi__readval(s,packet->channel,value))
                         return 0;
@@ -7175,7 +7250,14 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
             }
             memcpy( out + ((size_t)(layers - 1) * (size_t)stride), u, stride );
             if (layers >= 2) {
-               two_back = out - 2 * (size_t)stride;
+               // two_back must point at the frame that was the *current* frame
+               // two iterations ago. Since we just wrote frame index (layers-1),
+               // the frame two back from the *next* iteration's perspective is
+               // frame index (layers-2). The original code used
+               // "out - 2 * stride", which points before the buffer and causes
+               // an out-of-bounds read inside stbi__gif_load_next's dispose==3
+               // path.
+               two_back = out + ((size_t)(layers - 2) * (size_t)stride);
             }
 
             if (delays) {
@@ -7854,8 +7936,10 @@ static int stbi__is_16_main(stbi__context *s)
 #ifndef STBI_NO_STDIO
 STBIDEF int stbi_info(char const *filename, int *x, int *y, int *comp)
 {
-    FILE *f = stbi__fopen(filename, "rb");
+    FILE *f;
     int result;
+    if (!filename) return stbi__err("null filename", "Invalid argument");
+    f = stbi__fopen(filename, "rb");
     if (!f) return stbi__err("can't fopen", "Unable to open file");
     result = stbi_info_from_file(f, x, y, comp);
     fclose(f);
@@ -7866,7 +7950,9 @@ STBIDEF int stbi_info_from_file(FILE *f, int *x, int *y, int *comp)
 {
    int r;
    stbi__context s;
-   long pos = ftell(f);
+   long pos;
+   if (!f) return stbi__err("null file", "Invalid argument");
+   pos = ftell(f);
    stbi__start_file(&s, f);
    r = stbi__info_main(&s,x,y,comp);
    fseek(f,pos,SEEK_SET);
@@ -7875,8 +7961,10 @@ STBIDEF int stbi_info_from_file(FILE *f, int *x, int *y, int *comp)
 
 STBIDEF int stbi_is_16_bit(char const *filename)
 {
-    FILE *f = stbi__fopen(filename, "rb");
+    FILE *f;
     int result;
+    if (!filename) return stbi__err("null filename", "Invalid argument");
+    f = stbi__fopen(filename, "rb");
     if (!f) return stbi__err("can't fopen", "Unable to open file");
     result = stbi_is_16_bit_from_file(f);
     fclose(f);
@@ -7887,7 +7975,9 @@ STBIDEF int stbi_is_16_bit_from_file(FILE *f)
 {
    int r;
    stbi__context s;
-   long pos = ftell(f);
+   long pos;
+   if (!f) return stbi__err("null file", "Invalid argument");
+   pos = ftell(f);
    stbi__start_file(&s, f);
    r = stbi__is_16_main(&s);
    fseek(f,pos,SEEK_SET);
@@ -7905,6 +7995,7 @@ STBIDEF int stbi_info_from_memory(stbi_uc const *buffer, int len, int *x, int *y
 STBIDEF int stbi_info_from_callbacks(stbi_io_callbacks const *c, void *user, int *x, int *y, int *comp)
 {
    stbi__context s;
+   if (!c || !c->read || !c->skip || !c->eof) return 0;
    stbi__start_callbacks(&s, (stbi_io_callbacks *) c, user);
    return stbi__info_main(&s,x,y,comp);
 }
@@ -7919,6 +8010,7 @@ STBIDEF int stbi_is_16_bit_from_memory(stbi_uc const *buffer, int len)
 STBIDEF int stbi_is_16_bit_from_callbacks(stbi_io_callbacks const *c, void *user)
 {
    stbi__context s;
+   if (!c || !c->read || !c->skip || !c->eof) return 0;
    stbi__start_callbacks(&s, (stbi_io_callbacks *) c, user);
    return stbi__is_16_main(&s);
 }

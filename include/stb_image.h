@@ -1269,7 +1269,15 @@ static void stbi__vertical_flip(void *image, int w, int h, int bytes_per_pixel)
 static void stbi__vertical_flip_slices(void *image, int w, int h, int z, int bytes_per_pixel)
 {
    int slice;
-   int slice_size = w * h * bytes_per_pixel;
+   size_t slice_size;
+
+   // Validate before computing slice_size. The caller path from
+   // stbi_load_gif_from_memory already guarantees the allocation was
+   // stbi__malloc(layers * stride), but we double-check here to keep the
+   // pointer arithmetic sound even if some other caller violates that.
+   if (!image || w <= 0 || h <= 0 || z <= 0 || bytes_per_pixel <= 0) return;
+   if (!stbi__mad3sizes_valid(w, h, bytes_per_pixel, 0)) return;
+   slice_size = (size_t)w * (size_t)h * (size_t)bytes_per_pixel;
 
    stbi_uc *bytes = (stbi_uc *)image;
    for (slice = 0; slice < z; ++slice) {
@@ -1856,6 +1864,12 @@ static unsigned char *stbi__convert_format(unsigned char *data, int img_n, int r
    int i,j;
    unsigned char *good;
 
+   // Handle NULL input defensively: callers (e.g. stbi__pic_load on a
+   // load_core failure) have been known to pass through a failed decode
+   // without checking. Pre-hardening, this produced a NULL + offset read
+   // in the scanline loop. Just propagate the existing failure state.
+   if (data == NULL) return NULL;
+
    if (req_comp == img_n) return data;
    if (req_comp < 1 || req_comp > 4) {
       STBI_FREE(data);
@@ -1919,6 +1933,8 @@ static stbi__uint16 *stbi__convert_format16(stbi__uint16 *data, int img_n, int r
 {
    int i,j;
    stbi__uint16 *good;
+
+   if (data == NULL) return NULL;
 
    if (req_comp == img_n) return data;
    if (req_comp < 1 || req_comp > 4) {
@@ -3452,6 +3468,10 @@ static int stbi__process_frame_header(stbi__jpeg *z, int scan)
          return stbi__free_jpeg_components(z, i+1, stbi__err("outofmem", "Out of memory"));
       // align blocks for idct using mmx/sse
       z->img_comp[i].data = (stbi_uc*) (((size_t) z->img_comp[i].raw_data + 15) & ~15);
+      // Zero the aligned data region. A malformed progressive JPEG that
+      // declares more components than its SOS scans can otherwise IDCT heap
+      // garbage through to the final image (upstream #1928 bug 9).
+      memset(z->img_comp[i].data, 0, (size_t)z->img_comp[i].w2 * (size_t)z->img_comp[i].h2);
       if (z->progressive) {
          // w2, h2 are multiples of 8 (see above)
          z->img_comp[i].coeff_w = z->img_comp[i].w2 / 8;
@@ -3460,6 +3480,10 @@ static int stbi__process_frame_header(stbi__jpeg *z, int scan)
          if (z->img_comp[i].raw_coeff == NULL)
             return stbi__free_jpeg_components(z, i+1, stbi__err("outofmem", "Out of memory"));
          z->img_comp[i].coeff = (short*) (((size_t) z->img_comp[i].raw_coeff + 15) & ~15);
+         // Same reasoning: a progressive JPEG can leave some blocks untouched
+         // if they never appear in any SOS; zeroing means they decode to
+         // all-zero pixels instead of leaked heap.
+         memset(z->img_comp[i].coeff, 0, (size_t)z->img_comp[i].w2 * (size_t)z->img_comp[i].h2 * sizeof(short));
       }
    }
 
@@ -3525,6 +3549,7 @@ static stbi_uc stbi__skip_jpeg_junk_at_end(stbi__jpeg *j)
 static int stbi__decode_jpeg_image(stbi__jpeg *j)
 {
    int m;
+   int sos_seen = 0; // track whether we ever entered a scan
    for (m = 0; m < 4; m++) {
       j->img_comp[m].raw_data = NULL;
       j->img_comp[m].raw_coeff = NULL;
@@ -3534,6 +3559,7 @@ static int stbi__decode_jpeg_image(stbi__jpeg *j)
    m = stbi__get_marker(j);
    while (!stbi__EOI(m)) {
       if (stbi__SOS(m)) {
+         sos_seen = 1;
          if (!stbi__process_scan_header(j)) return 0;
          if (!stbi__parse_entropy_coded_data(j)) return 0;
          if (j->marker == STBI__MARKER_none ) {
@@ -3550,10 +3576,19 @@ static int stbi__decode_jpeg_image(stbi__jpeg *j)
          if (NL != j->s->img_y) return stbi__err("bad DNL height", "Corrupt JPEG");
          m = stbi__get_marker(j);
       } else {
-         if (!stbi__process_marker(j, m)) return 1;
+         // A failing process_marker used to return 1 here ("success"), which
+         // meant a JPEG with SOI + SOF + garbage (no SOS) would "succeed" and
+         // the caller would output whatever was in the component buffers.
+         // Treat the failure as a corrupt-stream error if we have not yet
+         // actually decoded any scan; otherwise tolerate it as trailing junk.
+         if (!stbi__process_marker(j, m)) {
+            if (!sos_seen) return stbi__err("no SOS", "Corrupt JPEG");
+            return 1;
+         }
          m = stbi__get_marker(j);
       }
    }
+   if (!sos_seen) return stbi__err("no SOS", "Corrupt JPEG");
    if (j->progressive)
       stbi__jpeg_finish(j);
    return 1;
@@ -5293,6 +5328,13 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
             color = stbi__get8(s);  if (color > 6)         return stbi__err("bad ctype","Corrupt PNG");
             if (color == 3 && z->depth == 16)                  return stbi__err("bad ctype","Corrupt PNG");
             if (color == 3) pal_img_n = 3; else if (color & 1) return stbi__err("bad ctype","Corrupt PNG");
+            // PNG spec (11.2.2) only allows specific depth/color combinations;
+            // reject RGB / RGBA / grayscale-alpha at sub-byte depths, which
+            // stb's unpack loops were never designed for (upstream #1928 bug 6).
+            if ((color == 2 || color == 4 || color == 6) && z->depth != 8 && z->depth != 16)
+               return stbi__err("bad ctype","Corrupt PNG");
+            if (color == 3 && z->depth != 1 && z->depth != 2 && z->depth != 4 && z->depth != 8)
+               return stbi__err("bad ctype","Corrupt PNG");
             comp  = stbi__get8(s);  if (comp) return stbi__err("bad comp method","Corrupt PNG");
             filter= stbi__get8(s);  if (filter) return stbi__err("bad filter method","Corrupt PNG");
             interlace = stbi__get8(s); if (interlace>1) return stbi__err("bad interlace method","Corrupt PNG");
@@ -5735,6 +5777,10 @@ static void *stbi__bmp_load(stbi__context *s, int *x, int *y, int *comp, int req
    stbi__bmp_data info;
    STBI_NOTUSED(ri);
 
+   // Zero-init the palette so out-of-range indices in paletted BMPs never
+   // leak uninitialized stack bytes into decoded pixels (upstream #1929).
+   memset(pal, 0, sizeof(pal));
+
    info.all_a = 255;
    if (stbi__bmp_parse_header(s, &info) == NULL)
       return NULL; // error code already set
@@ -5752,8 +5798,10 @@ static void *stbi__bmp_load(stbi__context *s, int *x, int *y, int *comp, int req
    all_a = info.all_a;
 
    if (info.hsz == 12) {
+      // OS/2 v1 BMP: 3-byte palette entries; palette starts right after
+      // the 14-byte file header and the 12-byte DIB header (upstream #1897).
       if (info.bpp < 24)
-         psize = (info.offset - info.extra_read - 24) / 3;
+         psize = (info.offset - info.extra_read - info.hsz) / 3;
    } else {
       if (info.bpp < 16)
          psize = (info.offset - info.extra_read - info.hsz) >> 2;
@@ -6735,7 +6783,7 @@ static void *stbi__pic_load(stbi__context *s,int *px,int *py,int *comp,int req_c
 
    if (!stbi__pic_load_core(s,x,y,comp, result)) {
       STBI_FREE(result);
-      result=0;
+      return NULL;
    }
    *px = x;
    *py = y;
@@ -6774,6 +6822,10 @@ typedef struct
    stbi_uc  pal[256][4];
    stbi_uc lpal[256][4];
    stbi__gif_lzw codes[8192];
+   // Scratch buffer for walking an LZW prefix chain iteratively. The chain
+   // can be up to 8192 entries (matching the dictionary size), which blows
+   // a small stack if done recursively (upstream #1935).
+   stbi__uint16 code_chain[8192];
    stbi_uc *color_table;
    int parse, step;
    int lflags;
@@ -6860,37 +6912,59 @@ static int stbi__gif_info_raw(stbi__context *s, int *x, int *y, int *comp)
 
 static void stbi__out_gif_code(stbi__gif *g, stbi__uint16 code)
 {
-   stbi_uc *p, *c;
-   int idx;
+   // Iterative reimplementation of the original recursive decode: walk the
+   // LZW prefix chain backwards into a scratch buffer, then emit suffixes in
+   // forward order. This caps stack usage at O(1) regardless of chain depth
+   // (upstream #1935: a GIF where every code points at the previous one used
+   // to blow small stacks around the 4096th frame of recursion).
+   stbi__uint16 *chain = g->code_chain;
+   int chain_len = 0;
+   int cur = code;
+   int max_chain = (int)(sizeof(g->code_chain) / sizeof(g->code_chain[0]));
 
-   // recurse to decode the prefixes, since the linked-list is backwards,
-   // and working backwards through an interleaved image would be nasty
-   if (g->codes[code].prefix >= 0)
-      stbi__out_gif_code(g, g->codes[code].prefix);
-
-   if (g->cur_y >= g->max_y) return;
-
-   idx = g->cur_x + g->cur_y;
-   p = &g->out[idx];
-   g->history[idx / 4] = 1;
-
-   c = &g->color_table[g->codes[code].suffix * 4];
-   if (c[3] > 128) { // don't render transparent pixels;
-      p[0] = c[2];
-      p[1] = c[1];
-      p[2] = c[0];
-      p[3] = c[3];
+   // Collect the chain oldest-first by walking prefixes until we hit a
+   // terminal (-1). Each step must strictly decrease the code index for a
+   // well-formed dictionary built by stbi__process_gif_raster; if not we
+   // bail to avoid an unbounded loop from a corrupt stream.
+   while (cur >= 0) {
+      int prefix;
+      if (chain_len >= max_chain) return; // corrupt stream
+      chain[chain_len++] = (stbi__uint16)cur;
+      prefix = g->codes[cur].prefix;
+      if (prefix >= cur) return; // corrupt stream: cycle or forward reference
+      cur = prefix;
    }
-   g->cur_x += 4;
 
-   if (g->cur_x >= g->max_x) {
-      g->cur_x = g->start_x;
-      g->cur_y += g->step;
+   // Walk in reverse (root-to-leaf) and emit suffixes.
+   while (chain_len > 0) {
+      stbi_uc *p, *c;
+      int idx;
+      int this_code = chain[--chain_len];
 
-      while (g->cur_y >= g->max_y && g->parse > 0) {
-         g->step = (1 << g->parse) * g->line_size;
-         g->cur_y = g->start_y + (g->step >> 1);
-         --g->parse;
+      if (g->cur_y >= g->max_y) return;
+
+      idx = g->cur_x + g->cur_y;
+      p = &g->out[idx];
+      g->history[idx / 4] = 1;
+
+      c = &g->color_table[g->codes[this_code].suffix * 4];
+      if (c[3] > 128) { // don't render transparent pixels;
+         p[0] = c[2];
+         p[1] = c[1];
+         p[2] = c[0];
+         p[3] = c[3];
+      }
+      g->cur_x += 4;
+
+      if (g->cur_x >= g->max_x) {
+         g->cur_x = g->start_x;
+         g->cur_y += g->step;
+
+         while (g->cur_y >= g->max_y && g->parse > 0) {
+            g->step = (1 << g->parse) * g->line_size;
+            g->cur_y = g->start_y + (g->step >> 1);
+            --g->parse;
+         }
       }
    }
 }

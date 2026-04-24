@@ -4363,6 +4363,15 @@ stbi_inline static stbi_uc stbi__zget8(stbi__zbuf *z)
 
 static void stbi__fill_bits(stbi__zbuf *z)
 {
+   // Defensive against a hypothetical caller-invariant violation: all
+   // current callers gate on num_bits < 16 (or 17), so we can't actually
+   // reach num_bits >= 32 here — but if a future caller slipped that, the
+   // 1U << num_bits / get8() << num_bits expressions below would be UB
+   // (shift count >= width of operand). Hard-fail instead.
+   if (z->num_bits >= 32) {
+      z->zbuffer = z->zbuffer_end;
+      return;
+   }
    do {
       if (z->code_buffer >= (1U << z->num_bits)) {
         z->zbuffer = z->zbuffer_end;  /* treat this as EOF so we fail. */

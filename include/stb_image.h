@@ -1178,6 +1178,11 @@ static void *stbi__load_main(stbi__context *s, int *x, int *y, int *comp, int re
    #ifndef STBI_NO_HDR
    if (stbi__hdr_test(s)) {
       float *hdr = stbi__hdr_load(s, x,y,comp,req_comp, ri);
+      // On early failure stbi__hdr_load may leave *x / *y / *comp
+      // unset (e.g. for a truncated file). Reading them here — even
+      // though stbi__hdr_to_ldr is defensive about NULL data — is a
+      // use-of-uninitialized-value that MSan catches.
+      if (hdr == NULL) return NULL;
       return stbi__hdr_to_ldr(hdr, *x, *y, req_comp ? req_comp : *comp);
    }
    #endif
@@ -1417,7 +1422,7 @@ STBIDEF stbi_uc *stbi_load_from_file(FILE *f, int *x, int *y, int *comp, int req
 {
    unsigned char *result;
    stbi__context s;
-   int dummy_x, dummy_y, dummy_c;
+   int dummy_x = 0, dummy_y = 0, dummy_c = 0;
    if (!f) return stbi__errpuc("null file", "Invalid argument");
    if (!x) x = &dummy_x;
    if (!y) y = &dummy_y;
@@ -1435,7 +1440,7 @@ STBIDEF stbi__uint16 *stbi_load_from_file_16(FILE *f, int *x, int *y, int *comp,
 {
    stbi__uint16 *result;
    stbi__context s;
-   int dummy_x, dummy_y, dummy_c;
+   int dummy_x = 0, dummy_y = 0, dummy_c = 0;
    if (!f) return (stbi__uint16 *) stbi__errpuc("null file", "Invalid argument");
    if (!x) x = &dummy_x;
    if (!y) y = &dummy_y;
@@ -1469,7 +1474,7 @@ STBIDEF stbi_us *stbi_load_16_from_memory(stbi_uc const *buffer, int len, int *x
    stbi__context s;
    // decoders unconditionally dereference *x and *y on success; accept NULL
    // outputs at the public API boundary by redirecting to local dummies.
-   int dummy_x, dummy_y, dummy_c;
+   int dummy_x = 0, dummy_y = 0, dummy_c = 0;
    if (!x) x = &dummy_x;
    if (!y) y = &dummy_y;
    if (!channels_in_file) channels_in_file = &dummy_c;
@@ -1480,7 +1485,7 @@ STBIDEF stbi_us *stbi_load_16_from_memory(stbi_uc const *buffer, int len, int *x
 STBIDEF stbi_us *stbi_load_16_from_callbacks(stbi_io_callbacks const *clbk, void *user, int *x, int *y, int *channels_in_file, int desired_channels)
 {
    stbi__context s;
-   int dummy_x, dummy_y, dummy_c;
+   int dummy_x = 0, dummy_y = 0, dummy_c = 0;
    if (!clbk || !clbk->read || !clbk->skip || !clbk->eof) return NULL;
    if (!x) x = &dummy_x;
    if (!y) y = &dummy_y;
@@ -1492,7 +1497,7 @@ STBIDEF stbi_us *stbi_load_16_from_callbacks(stbi_io_callbacks const *clbk, void
 STBIDEF stbi_uc *stbi_load_from_memory(stbi_uc const *buffer, int len, int *x, int *y, int *comp, int req_comp)
 {
    stbi__context s;
-   int dummy_x, dummy_y, dummy_c;
+   int dummy_x = 0, dummy_y = 0, dummy_c = 0;
    if (!x) x = &dummy_x;
    if (!y) y = &dummy_y;
    if (!comp) comp = &dummy_c;
@@ -1503,7 +1508,7 @@ STBIDEF stbi_uc *stbi_load_from_memory(stbi_uc const *buffer, int len, int *x, i
 STBIDEF stbi_uc *stbi_load_from_callbacks(stbi_io_callbacks const *clbk, void *user, int *x, int *y, int *comp, int req_comp)
 {
    stbi__context s;
-   int dummy_x, dummy_y, dummy_c;
+   int dummy_x = 0, dummy_y = 0, dummy_c = 0;
    if (!clbk || !clbk->read || !clbk->skip || !clbk->eof) return NULL;
    if (!x) x = &dummy_x;
    if (!y) y = &dummy_y;
@@ -1517,7 +1522,7 @@ STBIDEF stbi_uc *stbi_load_gif_from_memory(stbi_uc const *buffer, int len, int *
 {
    unsigned char *result;
    stbi__context s;
-   int dummy_x, dummy_y, dummy_z, dummy_c;
+   int dummy_x = 0, dummy_y = 0, dummy_z = 0, dummy_c = 0;
    if (!x) x = &dummy_x;
    if (!y) y = &dummy_y;
    if (!z) z = &dummy_z;
@@ -1556,7 +1561,7 @@ static float *stbi__loadf_main(stbi__context *s, int *x, int *y, int *comp, int 
 STBIDEF float *stbi_loadf_from_memory(stbi_uc const *buffer, int len, int *x, int *y, int *comp, int req_comp)
 {
    stbi__context s;
-   int dummy_x, dummy_y, dummy_c;
+   int dummy_x = 0, dummy_y = 0, dummy_c = 0;
    if (!x) x = &dummy_x;
    if (!y) y = &dummy_y;
    if (!comp) comp = &dummy_c;
@@ -1567,7 +1572,7 @@ STBIDEF float *stbi_loadf_from_memory(stbi_uc const *buffer, int len, int *x, in
 STBIDEF float *stbi_loadf_from_callbacks(stbi_io_callbacks const *clbk, void *user, int *x, int *y, int *comp, int req_comp)
 {
    stbi__context s;
-   int dummy_x, dummy_y, dummy_c;
+   int dummy_x = 0, dummy_y = 0, dummy_c = 0;
    if (!clbk || !clbk->read || !clbk->skip || !clbk->eof) return NULL;
    if (!x) x = &dummy_x;
    if (!y) y = &dummy_y;
@@ -1592,7 +1597,7 @@ STBIDEF float *stbi_loadf(char const *filename, int *x, int *y, int *comp, int r
 STBIDEF float *stbi_loadf_from_file(FILE *f, int *x, int *y, int *comp, int req_comp)
 {
    stbi__context s;
-   int dummy_x, dummy_y, dummy_c;
+   int dummy_x = 0, dummy_y = 0, dummy_c = 0;
    if (!f) return stbi__errpf("null file", "Invalid argument");
    if (!x) x = &dummy_x;
    if (!y) y = &dummy_y;

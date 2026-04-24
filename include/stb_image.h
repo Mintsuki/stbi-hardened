@@ -5009,7 +5009,7 @@ static int stbi__create_png_image_raw(stbi__png *a, stbi_uc *raw, stbi__uint32 r
             stbi__create_png_alpha_expand8(dest, dest, x, img_n);
       } else if (depth == 8) {
          if (img_n == out_n)
-            memcpy(dest, cur, x*img_n);
+            memcpy(dest, cur, (size_t)x * (size_t)img_n);
          else
             stbi__create_png_alpha_expand8(dest, cur, x, img_n);
       } else if (depth == 16) {
@@ -6810,7 +6810,7 @@ static void *stbi__pic_load(stbi__context *s,int *px,int *py,int *comp,int req_c
    // intermediate buffer is RGBA
    result = (stbi_uc *) stbi__malloc_mad3(x, y, 4, 0);
    if (!result) return stbi__errpuc("outofmem", "Out of memory");
-   memset(result, 0xff, x*y*4);
+   memset(result, 0xff, (size_t)x * (size_t)y * 4);
 
    if (!stbi__pic_load_core(s,x,y,comp, result)) {
       STBI_FREE(result);
@@ -7148,11 +7148,15 @@ static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, i
       }
 
       // background is what out is after the undoing of the previou frame;
-      memcpy( g->background, g->out, 4 * g->w * g->h );
+      // (size_t) casts avoid a theoretical int overflow on 16-bit platforms
+      // — by this point mad3sizes_valid(4, w, h, 0) has already vouched for
+      // the product, but the explicit widening silences analyzers too
+      // (upstream PR #1658).
+      memcpy( g->background, g->out, (size_t)4 * (size_t)g->w * (size_t)g->h );
    }
 
    // clear my history;
-   memset( g->history, 0x00, g->w * g->h );        // pixels that were affected previous frame
+   memset( g->history, 0x00, (size_t)g->w * (size_t)g->h );        // pixels that were affected previous frame
 
    for (;;) {
       int tag = stbi__get8(s);
@@ -8099,6 +8103,7 @@ static int stbi__is_16_main(stbi__context *s)
    #ifndef STBI_NO_PNM
    if (stbi__pnm_is16(s))  return 1;
    #endif
+   STBI_NOTUSED(s); // all three checks may compile out (upstream PR #1467)
    return 0;
 }
 

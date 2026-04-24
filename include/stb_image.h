@@ -1290,7 +1290,13 @@ static void stbi__vertical_flip_slices(void *image, int w, int h, int z, int byt
 static unsigned char *stbi__load_and_postprocess_8bit(stbi__context *s, int *x, int *y, int *comp, int req_comp)
 {
    stbi__result_info ri;
-   void *result = stbi__load_main(s, x, y, comp, req_comp, &ri, 8);
+   void *result;
+   // Reject req_comp outside [0,4] up front. Previously some decoder paths
+   // (BMP, GIF) would happily allocate `req_comp * w * h` without catching
+   // invalid values, and with NDEBUG compiled out the STBI_ASSERT in
+   // stbi__convert_format didn't fire (upstream #1516).
+   if (req_comp < 0 || req_comp > 4) return stbi__errpuc("bad req_comp", "Invalid request component count");
+   result = stbi__load_main(s, x, y, comp, req_comp, &ri, 8);
 
    if (result == NULL)
       return NULL;
@@ -1316,7 +1322,9 @@ static unsigned char *stbi__load_and_postprocess_8bit(stbi__context *s, int *x, 
 static stbi__uint16 *stbi__load_and_postprocess_16bit(stbi__context *s, int *x, int *y, int *comp, int req_comp)
 {
    stbi__result_info ri;
-   void *result = stbi__load_main(s, x, y, comp, req_comp, &ri, 16);
+   void *result;
+   if (req_comp < 0 || req_comp > 4) return (stbi__uint16 *) stbi__errpuc("bad req_comp", "Invalid request component count");
+   result = stbi__load_main(s, x, y, comp, req_comp, &ri, 16);
 
    if (result == NULL)
       return NULL;
@@ -1529,6 +1537,7 @@ STBIDEF stbi_uc *stbi_load_gif_from_memory(stbi_uc const *buffer, int len, int *
 static float *stbi__loadf_main(stbi__context *s, int *x, int *y, int *comp, int req_comp)
 {
    unsigned char *data;
+   if (req_comp < 0 || req_comp > 4) return stbi__errpf("bad req_comp", "Invalid request component count");
    #ifndef STBI_NO_HDR
    if (stbi__hdr_test(s)) {
       stbi__result_info ri;
@@ -4496,9 +4505,11 @@ static int stbi__parse_huffman_block(stbi__zbuf *a)
          p = (stbi_uc *) (zout - dist);
          if (dist == 1) { // run of one byte; common in images.
             stbi_uc v = *p;
-            if (len) { do *zout++ = v; while (--len); }
+            // explicit cast silences -fsanitize=implicit-unsigned-integer-truncation
+            // / -Wconversion: zout is char* and v is stbi_uc (unsigned char).
+            if (len) { do *zout++ = (char)v; while (--len); }
          } else {
-            if (len) { do *zout++ = *p++; while (--len); }
+            if (len) { do *zout++ = (char)*p++; while (--len); }
          }
       }
    }
@@ -6171,6 +6182,12 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
 
    tga_data = (unsigned char*)stbi__malloc_mad3(tga_width, tga_height, tga_comp, 0);
    if (!tga_data) return stbi__errpuc("outofmem", "Out of memory");
+   // Zero the buffer so any scanline that we fail to fully read from the
+   // stream (e.g. truncated file) decodes to all-zero pixels instead of
+   // leaking previous heap contents to the caller (upstream #1542,
+   // CVE-2023-45663). This also covers the paletted / RLE / rgb16 paths
+   // below which write channel-by-channel.
+   memset(tga_data, 0, (size_t)tga_width * (size_t)tga_height * (size_t)tga_comp);
 
    // skip to the data's starting position (offset usually = 0)
    stbi__skip(s, tga_offset );
@@ -6179,7 +6196,13 @@ static void *stbi__tga_load(stbi__context *s, int *x, int *y, int *comp, int req
       for (i=0; i < tga_height; ++i) {
          int row = tga_inverted ? tga_height -i - 1 : i;
          stbi_uc *tga_row = tga_data + row*tga_width*tga_comp;
-         stbi__getn(s, tga_row, tga_width * tga_comp);
+         // Propagate truncated-stream failures. Previously any remaining
+         // bytes stayed at whatever stbi__getn wrote (or didn't), which
+         // could disclose prior heap contents on a short read.
+         if (!stbi__getn(s, tga_row, tga_width * tga_comp)) {
+            STBI_FREE(tga_data);
+            return stbi__errpuc("bad TGA", "Truncated TGA image data");
+         }
       }
    } else  {
       //   do I need to load a palette?
@@ -7355,11 +7378,21 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
             return stbi__errpuc("too large", "GIF too large to convert");
          }
          out = stbi__convert_format(out, 4, req_comp, (unsigned int)(layers * g.w), (unsigned int)g.h);
+         // convert_format frees `out` on failure. If it does, the caller has
+         // no way to free *delays — so do it here (upstream #1548,
+         // CVE-2023-45666).
+         if (out == NULL) {
+            if (delays && *delays) { STBI_FREE(*delays); *delays = NULL; }
+            return NULL;
+         }
       }
 
       *z = layers;
       return out;
    } else {
+      // gif_test failed: make sure we never leave *delays pointing at
+      // something the caller thinks it owns.
+      if (delays) *delays = NULL;
       return stbi__errpuc("not GIF", "Image was not as a gif type.");
    }
 }
@@ -7537,9 +7570,15 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
       // Read flat data
       for (j=0; j < height; ++j) {
          for (i=0; i < width; ++i) {
-            stbi_uc rgbe[4];
+            stbi_uc rgbe[4] = { 0, 0, 0, 0 };
            main_decode_loop:
-            stbi__getn(s, rgbe, 4);
+            // A truncated HDR file previously left rgbe uninitialized and
+            // fed the stale stack into the output. Zero-init above + propagate
+            // the short-read as a decode failure (upstream #1542).
+            if (!stbi__getn(s, rgbe, 4)) {
+               STBI_FREE(hdr_data);
+               return stbi__errpf("bad HDR", "Truncated HDR scanline");
+            }
             stbi__hdr_convert(hdr_data + j * width * req_comp + i * req_comp, rgbe, req_comp);
          }
       }

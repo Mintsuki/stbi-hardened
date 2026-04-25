@@ -39,7 +39,7 @@ Each line is one behavioural change made to `include/stb_image.h`. Upstream refe
 
 ## PNG
 
-- Tighter sample-count bound in IHDR (`1<<30` → `1<<29`) so downstream `raw_len` math stays in `int`. [CVE-2025-2618](https://nvd.nist.gov/vuln/detail/CVE-2025-2618), [#1757](https://github.com/nothings/stb/issues/1757).
+- Tighter sample-count bound in IHDR (`1<<30` → `1<<29`) so downstream `raw_len` math stays in `int`. [#1757](https://github.com/nothings/stb/issues/1757) (CVE number reported in issue is invalid).
 - Reject invalid color-type / bit-depth combinations per PNG spec 11.2.2. [#1928](https://github.com/nothings/stb/issues/1928) bug 6.
 - Reject chunk lengths above `INT_MAX` up front.
 - `ioff + c.length` overflow check on IDAT accumulation; cap `idata_limit *= 2` at `INT_MAX/2`. [#1928](https://github.com/nothings/stb/issues/1928) bug 7.

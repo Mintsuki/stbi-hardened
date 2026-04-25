@@ -29,7 +29,7 @@ SAN_FLAGS  := -fsanitize=address,undefined
 MSAN_FLAGS := -fsanitize=memory -fno-omit-frame-pointer -fsanitize-memory-track-origins=2
 
 BUILD    := build
-SUITES   := driver adversarial upstream_issues upstream_pngsuite
+SUITES   := driver adversarial upstream_issues upstream_pngsuite regress_gif_delays
 FUZZ_ITER ?= 10000
 FUZZ_LEN  ?= 16384
 

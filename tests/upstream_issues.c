@@ -299,6 +299,36 @@ static void test_1935_gif_lzw_depth(void)
     if (p) stbi_image_free(p);
 }
 
+/* ---------- CVE-2023-43281 GIF zero-dimension double-free ---------- */
+
+static void test_cve_2023_43281_gif_zero_dims(void)
+{
+    /* GIF declares a 0x0 logical screen, then a frame. Upstream gets
+     * stride = 0, hits realloc(p, 0) (which on glibc frees p and returns
+     * NULL), and then the cleanup helper STBI_FREE's the now-stale
+     * pointer — double-free. Hardened version rejects up front in
+     * stbi__gif_load_next via `if (g->w <= 0 || g->h <= 0)`. */
+    static const unsigned char gif[] = {
+        'G','I','F','8','9','a',
+        0x00,0x00, 0x00,0x00,                    /* w = 0, h = 0 */
+        0x80, 0x00, 0x00,
+        0xff,0xff,0xff, 0x00,0x00,0x00,
+        0x21, 0xF9, 0x04, 0x00, 0x00,0x00, 0x00, 0x00,
+        0x2C, 0,0, 0,0, 0x01,0x00, 0x01,0x00, 0x00,
+        0x02, 0x02, 0x44,0x00, 0x00,
+        0x3B
+    };
+    int *delays = NULL;
+    int x=0, y=0, z=0, n=0;
+    unsigned char *p = stbi_load_gif_from_memory(gif, sizeof gif, &delays, &x, &y, &z, &n, 0);
+    /* Idiomatic harness pattern: free both unconditionally. With the fix
+     * delays is NULL on the failure path so the conditional is a no-op. */
+    if (p) stbi_image_free(p);
+    if (delays) free(delays);
+    report("CVE-2023-43281 GIF zero dims", !p,
+           p ? "WRONGLY ACCEPTED" : (stbi_failure_reason() ? stbi_failure_reason() : "rejected"));
+}
+
 /* ---------- #1928 bug 6: invalid PNG color-type/bit-depth combos ---------- */
 
 static void test_1928b6_png_bad_ctype_depth(void)
@@ -336,6 +366,7 @@ int main(void)
     test_1608_jpeg_missing_sos();
     test_1935_gif_lzw_depth();
     test_1928b6_png_bad_ctype_depth();
+    test_cve_2023_43281_gif_zero_dims();
 
     /* #1516 heap overflow with bad req_comp + NDEBUG: we now reject
      * req_comp not in 1..4 at the top of stbi__convert_format. */

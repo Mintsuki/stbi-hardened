@@ -69,13 +69,13 @@ Each line is one behavioural change made to `include/stb_image.h`. Upstream refe
 
 ## GIF
 
-- Reject `w <= 0 || h <= 0` up front; use `malloc_mad3` for `out` / `background` / `history`.
+- Reject `w <= 0 || h <= 0` up front; use `malloc_mad3` for `out` / `background` / `history`. The `w <= 0 || h <= 0` reject also kills upstream's `realloc(out, layers * stride)` with `stride == 0` double-free on a crafted zero-dimension GIF. [CVE-2023-43281](https://nvd.nist.gov/vuln/detail/CVE-2023-43281).
 - Image Descriptor: reject negatives; check `w > g->w - x` style to avoid sub-rect wrap.
 - Animated path: overflow guards on `layers * stride` and `layers * sizeof(int)`. [#1531](https://github.com/nothings/stb/issues/1531), [#1930](https://github.com/nothings/stb/issues/1930).
-- `two_back = out + (layers - 2) * stride` (was `out - 2 * stride`, pointing before the buffer). [CVE-2023-45661](https://nvd.nist.gov/vuln/detail/CVE-2023-45661), [#1538](https://github.com/nothings/stb/issues/1538), [#1916](https://github.com/nothings/stb/issues/1916), [PR #1404](https://github.com/nothings/stb/pull/1404).
+- `two_back = out + (layers - 2) * stride` (was `out - 2 * stride`, pointing before the buffer). [CVE-2023-45661](https://nvd.nist.gov/vuln/detail/CVE-2023-45661), [CVE-2026-5185](https://nvd.nist.gov/vuln/detail/CVE-2026-5185), [CVE-2026-5313](https://nvd.nist.gov/vuln/detail/CVE-2026-5313), [#1538](https://github.com/nothings/stb/issues/1538), [#1916](https://github.com/nothings/stb/issues/1916), [#1620](https://github.com/nothings/stb/issues/1620), [PR #1404](https://github.com/nothings/stb/pull/1404).
 - `stbi_load_gif_from_memory`: flip with `req_comp ? req_comp : *comp`, not `*comp`. [CVE-2023-45662](https://nvd.nist.gov/vuln/detail/CVE-2023-45662), [#1540](https://github.com/nothings/stb/issues/1540).
 - Clear `*delays` after a `convert_format` failure and on the `gif_test` rejection path. [CVE-2023-45664](https://nvd.nist.gov/vuln/detail/CVE-2023-45664), [CVE-2023-45666](https://nvd.nist.gov/vuln/detail/CVE-2023-45666), [CVE-2023-45667](https://nvd.nist.gov/vuln/detail/CVE-2023-45667), [#1544](https://github.com/nothings/stb/issues/1544), [#1548](https://github.com/nothings/stb/issues/1548), [#1550](https://github.com/nothings/stb/issues/1550), [PR #1839](https://github.com/nothings/stb/pull/1839).
-- Clear `*delays` in `stbi__load_gif_main_outofmem` after freeing it, so the OOM / overflow-guard paths from `stbi__load_gif_main` don't leave the caller with a dangling pointer that the standard `if (delays) free(delays)` idiom double-frees.
+- Clear `*delays` in `stbi__load_gif_main_outofmem` after freeing it, so the OOM / overflow-guard paths from `stbi__load_gif_main` don't leave the caller with a dangling pointer that the standard `if (delays) free(delays)` idiom double-frees. [CVE-2026-5186](https://nvd.nist.gov/vuln/detail/CVE-2026-5186).
 - `stbi__out_gif_code`: rewrite as an iterative prefix walk with a scratch buffer so deep dictionaries can't blow the stack. [#1935](https://github.com/nothings/stb/issues/1935).
 - Move the ~80 KB `stbi__gif` struct onto the heap in `stbi__load_gif_main` and `stbi__gif_load`. [PR #1592](https://github.com/nothings/stb/pull/1592), [PR #1882](https://github.com/nothings/stb/pull/1882).
 

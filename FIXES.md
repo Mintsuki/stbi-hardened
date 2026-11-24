@@ -2,6 +2,8 @@
 
 The fixes are relative to upstream stb_image as of commit [`013ac3beddff3dbffafd5177e7972067cd2b5083`](https://github.com/nothings/stb/commit/013ac3beddff3dbffafd5177e7972067cd2b5083).
 
+Security-relevant fixes merged from upstream since that base are noted "(upstream <commit>)"; where the fork had an equivalent fix first, the upstream change was folded in or a no-op.
+
 Each line is one behavioural change made to `include/stb_image.h`. Upstream references (issue `#nnnn`, `PR #nnnn`, `CVE-…`) point at public discussion of the same bug; if a line has no reference, the fix was found locally.
 
 ## Integer / allocation helpers
@@ -50,22 +52,29 @@ Each line is one behavioural change made to `include/stb_image.h`. Upstream refe
 - Zero-init `lencodes[]` in `stbi__compute_huffman_codes`.
 - `stbi__fill_bits`: early-return if `num_bits >= 32` to keep `1U << num_bits` in defined range.
 - zlib literal-run writer: explicit `(char)` cast on the stored byte. [#1408](https://github.com/nothings/stb/issues/1408).
+- `stbi__zexpand`: guard `limit == 0` (empty zout buffer) to avoid an infinite loop doubling 0 (upstream 9af948e, issue #2012).
+- Unknown-chunk error path is no longer a mutated static buffer (not thread-safe); plain string literal error (upstream 796dd17).
 
 ## BMP
 
-- Zero-init `pal[256][4]` so palette indices past `biClrUsed` decode as zeros. [#1929](https://github.com/nothings/stb/issues/1929), [#1928](https://github.com/nothings/stb/issues/1928) bug 10.
-- OS/2 v1: `psize = (offset - extra_read - hsz) / 3` (was hardcoded `-24`). [#1897](https://github.com/nothings/stb/issues/1897).
+- Zero-init `pal[256][4]` so palette indices past `biClrUsed` decode as zeros. [#1929](https://github.com/nothings/issues/1929), [#1928](https://github.com/nothings/stb/issues/1928) bug 10. (upstream f88444a is the same fix)
+- OS/2 v1: `psize = (offset - extra_read - hsz) / 3` (was hardcoded `-24`). [#1897](https://github.com/nothings/stb/issues/1897). Superseded by the upstream bytes_read_so_far formulation (562641d): reject `offset < hsz + extra_read` up front and derive `psize` from that.
 - BITMAPV3INFOHEADER: read the embedded 16-byte RGBA mask block that was previously discarded. [PR #1827](https://github.com/nothings/stb/pull/1827), [PR #1450](https://github.com/nothings/stb/pull/1450).
+- Dimension checks tightened to the upstream form: reject `img_y < -MAX` (cast for sign-compare safety), `img_x <= 0`, and `!img_y` (0def4f4, 4c1aba1).
+- BI_RGB default masks: bpp16/bpp32 now set `ma = 0` — BI_RGB BMPs never have real alpha (5b5bc4f).
+- bpp32 easy-path alpha: before the v3 header (`hsz < 56`) alpha is treated as absent; `easy == 2` accepts `ma == 0` with an `alpha_override` of 255 so opaque sources still decode opaque (c68bb50).
+- `psize == 0` path no longer re-skips to the line data (already positioned); matches upstream faf795b.
 
 ## TGA
 
-- Zero-init `tga_data`; propagate `stbi__getn` short-reads as a decode failure. [CVE-2023-45663](https://nvd.nist.gov/vuln/detail/CVE-2023-45663), [#1542](https://github.com/nothings/stb/issues/1542).
+- Zero-init `tga_data`; propagate `stbi__getn` short-reads as a decode failure. [CVE-2023-45663](https://nvd.nist.gov/vuln/detail/CVE-2023-45663), [#1542](https://github.com/nothings/stb/issues/1542). The short-read path also frees `tga_data` (upstream 150236b).
 
 ## PSD
 
 - Require `channelCount >= 1` and `w > 0`, `h > 0`.
 - Use `stbi__malloc_mad3(4, w, h, 0)` instead of `malloc(4 * w * h)`.
 - White-matte unpremultiply: clamp each channel to `[0, 255]` / `[0, 65535]` before the narrowing cast.
+- `stbi__psd_is16`: skip the two reserved 32-bit fields with `stbi__skip(s, 8)` instead of `STBI_NOTUSED(stbi__get32be())` pairs, which misparse on GCC/Clang (upstream 2715b72).
 
 ## GIF
 
@@ -78,11 +87,15 @@ Each line is one behavioural change made to `include/stb_image.h`. Upstream refe
 - Clear `*delays` in `stbi__load_gif_main_outofmem` after freeing it, so the OOM / overflow-guard paths from `stbi__load_gif_main` don't leave the caller with a dangling pointer that the standard `if (delays) free(delays)` idiom double-frees. [CVE-2026-5186](https://nvd.nist.gov/vuln/detail/CVE-2026-5186).
 - `stbi__out_gif_code`: rewrite as an iterative prefix walk with a scratch buffer so deep dictionaries can't blow the stack. [#1935](https://github.com/nothings/stb/issues/1935).
 - Move the ~80 KB `stbi__gif` struct onto the heap in `stbi__load_gif_main` and `stbi__gif_load`. [PR #1592](https://github.com/nothings/stb/pull/1592), [PR #1882](https://github.com/nothings/stb/pull/1882).
+- Reject initial LZW code size outside `[2, 8]` per the GIF89a spec (upstream 389145f).
+- Dispose-3 ("restore to previous") now reverts to the last frame that was NOT in dispose-3 mode, tracked via a private `saved_pixels` copy, instead of a `two_back` frame pointer computed from `out` (which reallocs); dispose mode is also honored per-frame via `g->eflags`. Merged from upstream bc6c8a5, adapted: the fork keeps frames in one realloc'd buffer rather than per-frame allocations, so `saved_pixels` is a separately malloc'd snapshot (fixes the heap-use-after-free a naive adaptation would introduce).
+- `stbi_load_gif_from_memory`: reject `req_comp` outside `[0, 4]` at entry (upstream 9d81ffc, partial).
 
 ## HDR
 
 - Require `width >= 1` and `height >= 1`.
 - Flat-data path: zero-init `rgbe[]` and propagate `stbi__getn` short-reads as a decode failure. [#1542](https://github.com/nothings/stb/issues/1542).
+- `stbi__hdr_convert`: RGBE reconstruction now adds the 0.5 rounding offsets (folded `/3` into an exponent LUT), fixing value round-trip bias (upstream ade8b91, 11e9ec2-style LUT).
 
 ## PIC
 
@@ -92,8 +105,14 @@ Each line is one behavioural change made to `include/stb_image.h`. Upstream refe
 ## PNM
 
 - 16-bit samples are big-endian on disk; byte-swap to native after load. [PR #1710](https://github.com/nothings/stb/pull/1710), [PR #1828](https://github.com/nothings/stb/pull/1828).
+- Rescale samples when maxval differs from the full output range, including the 16-bit native-order path (upstream 2939938).
 
 ## Defensive / portability
 
 - `(size_t)` widening on the `memcpy`/`memset` multiplications in `create_png_image_raw` (depth=8 fast path), `stbi__pic_load` (canvas fill), `stbi__gif_load_next` (background copy, history clear), and `stbi__vertical_flip_slices`. [PR #1658](https://github.com/nothings/stb/pull/1658).
 - `STBI_NOTUSED(s)` in `stbi__is_16_main` so an all-decoders-off build has no unused-parameter warning. [PR #1467](https://github.com/nothings/stb/pull/1467).
+
+## Upstream commits assessed and NOT merged
+
+- `dded90e` (remove PIC support entirely), `328faf7` (PNM ASCII), `5c03b32` (TGA horizontal flip), `46d293f` (`stbi_info_res` struct API), `880cc4e` (compile as C++), `2de0c1b`/`577248e`/`e4efdc8`/`3f9200a`/`de23427`/`51c22cc` equivalents already present in the fork, `1417f1e` (equivalent: fork's `sos_seen` check), `033efa1`/`1da9ade` (version bumps), `975c89e` (already present), `dd4aa5f`/`7f00b67` (covered by fork's OS/2/V3 header handling), `048d2aa`/`4e2c1c9`/`82f1bda`/`0aed35f`/`3556e38`/`d841142`/`98a8f2a`/`e918dd5`/`aec755b` (style/docs/portability, no security impact), `4f5c9bb` (VC6), `d7c2938` (fallthrough annotations), `fddcb01` (warnings), `536c97a` (covered/evaluated, cosmetic + overlaps above), `e3dca25`/`11e9ec2` (HDR perf LUT — perf only).
+- Fork intentionally keeps stricter-than-upstream behavior in places (e.g. `req_comp` range rejection, PSD `channelCount` limits); upstream loosening commits were not adopted where they would weaken the hardened posture.

@@ -975,6 +975,7 @@ static int      stbi__gif_info(stbi__context *s, int *x, int *y, int *comp);
 static int      stbi__pnm_test(stbi__context *s);
 static void    *stbi__pnm_load(stbi__context *s, int *x, int *y, int *comp, int req_comp, stbi__result_info *ri);
 static int      stbi__pnm_info(stbi__context *s, int *x, int *y, int *comp);
+static int      stbi__pnm_info_ex(stbi__context *s, int *x, int *y, int *comp, int *maxval_out);
 static int      stbi__pnm_is16(stbi__context *s);
 #endif
 
@@ -1298,7 +1299,8 @@ static unsigned char *stbi__load_and_postprocess_8bit(stbi__context *s, int *x, 
    stbi__result_info ri;
    void *result;
    // gate at the API boundary so no decoder has to re-check and no inner
-   // allocation can ever see a nonsensical channel count
+   // allocation can ever see a nonsensical channel count. req_comp == 0
+   // (keep source channels) is fine for 8-bit loads.
    if (req_comp < 0 || req_comp > 4) return stbi__errpuc("bad req_comp", "Invalid request component count");
    result = stbi__load_main(s, x, y, comp, req_comp, &ri, 8);
 
@@ -1526,6 +1528,9 @@ STBIDEF stbi_uc *stbi_load_gif_from_memory(stbi_uc const *buffer, int len, int *
    if (!z) z = &dummy_z;
    if (!comp) comp = &dummy_c;
    stbi__start_mem(&s,buffer,len);
+
+   if (req_comp < 0 || req_comp > 4)
+      return stbi__errpuc("bad req_comp", "Invalid number of required components");
 
    result = (unsigned char*) stbi__load_gif_main(&s, delays, x, y, z, comp, req_comp);
    if (result && stbi__vertically_flip_on_load) {

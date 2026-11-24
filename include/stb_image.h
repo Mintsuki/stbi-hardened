@@ -5667,11 +5667,12 @@ static int stbi__bmp_set_mask_defaults(stbi__bmp_data *info, int compress)
          info->mr = 31u << 10;
          info->mg = 31u <<  5;
          info->mb = 31u <<  0;
+         info->ma = 0;
       } else if (info->bpp == 32) {
          info->mr = 0xffu << 16;
          info->mg = 0xffu <<  8;
          info->mb = 0xffu <<  0;
-         info->ma = 0xffu << 24;
+         info->ma = 0; // BI_BITFIELDS BMPs can have alpha, but BI_RGB ones never do
          info->all_a = 0; // if all_a is 0 at end, then we loaded alpha channel but it was all 0
       } else {
          // otherwise, use defaults, which is all-0
@@ -5777,6 +5778,7 @@ static void *stbi__bmp_load(stbi__context *s, int *x, int *y, int *comp, int req
    stbi_uc pal[256][4];
    int psize=0,i,j,width;
    int flip_vertically, pad, target;
+   int bytes_read_so_far;
    stbi__bmp_data info;
    STBI_NOTUSED(ri);
 
@@ -5790,8 +5792,10 @@ static void *stbi__bmp_load(stbi__context *s, int *x, int *y, int *comp, int req
    flip_vertically = ((int) s->img_y) > 0;
    s->img_y = abs((int) s->img_y);
 
-   if (s->img_y > STBI_MAX_DIMENSIONS) return stbi__errpuc("too large","Very large image (corrupt?)");
-   if (s->img_x > STBI_MAX_DIMENSIONS) return stbi__errpuc("too large","Very large image (corrupt?)");
+   if (s->img_y > STBI_MAX_DIMENSIONS || (int)s->img_y < -STBI_MAX_DIMENSIONS || !s->img_y ||
+       s->img_x > STBI_MAX_DIMENSIONS || s->img_x <= 0) {
+      return stbi__errpuc("bad size","Invalid image dimensions (corrupt?)");
+   }
 
    mr = info.mr;
    mg = info.mg;
@@ -5799,18 +5803,21 @@ static void *stbi__bmp_load(stbi__context *s, int *x, int *y, int *comp, int req
    ma = info.ma;
    all_a = info.all_a;
 
+   bytes_read_so_far = info.hsz + info.extra_read;
+   if (info.offset < bytes_read_so_far)
+      return stbi__errpuc("bad header", "Corrupt BMP");
+
    if (info.hsz == 12) {
       // OS/2 v1 BMP: 3-byte palette entries immediately following the DIB header
       if (info.bpp < 24)
-         psize = (info.offset - info.extra_read - info.hsz) / 3;
+         psize = (info.offset - bytes_read_so_far) / 3;
    } else {
       if (info.bpp < 16)
-         psize = (info.offset - info.extra_read - info.hsz) >> 2;
+         psize = (info.offset - bytes_read_so_far) >> 2;
    }
    if (psize == 0) {
       // accept some number of extra bytes after the header, but if the offset points either to before
       // the header ends or implies a large amount of extra data, reject the file as malformed
-      int bytes_read_so_far = s->callback_already_read + (int)(s->img_buffer - s->img_buffer_original);
       int header_limit = 1024; // max we actually read is below 256 bytes currently.
       int extra_data_limit = 256*4; // what ordinarily goes here is a palette; 256 entries*4 bytes is its max size.
       if (bytes_read_so_far <= 0 || bytes_read_so_far > header_limit) {
@@ -5901,7 +5908,8 @@ static void *stbi__bmp_load(stbi__context *s, int *x, int *y, int *comp, int req
       int rshift=0,gshift=0,bshift=0,ashift=0,rcount=0,gcount=0,bcount=0,acount=0;
       int z = 0;
       int easy=0;
-      stbi__skip(s, info.offset - info.extra_read - info.hsz);
+      stbi_uc alpha_override=0;
+      // psize is 0, already skipped to line data above
       if (info.bpp == 24) width = 3 * s->img_x;
       else if (info.bpp == 16) width = 2*s->img_x;
       else /* bpp = 32 and pad = 0 */ width=0;
@@ -5909,8 +5917,12 @@ static void *stbi__bmp_load(stbi__context *s, int *x, int *y, int *comp, int req
       if (info.bpp == 24) {
          easy = 1;
       } else if (info.bpp == 32) {
-         if (mb == 0xff && mg == 0xff00 && mr == 0x00ff0000 && ma == 0xff000000)
+         if (info.hsz < 56) // before v3 header, no real alpha support, so treat alpha as not present
+            ma = 0;
+         if (mb == 0xff && mg == 0xff00 && mr == 0x00ff0000 && (ma == 0xff000000 || ma == 0)) {
             easy = 2;
+            alpha_override = ma ? 0 : 255;
+         }
       }
       if (!easy) {
          if (!mr || !mg || !mb) { STBI_FREE(out); return stbi__errpuc("bad masks", "Corrupt BMP"); }
@@ -5929,7 +5941,7 @@ static void *stbi__bmp_load(stbi__context *s, int *x, int *y, int *comp, int req
                out[z+1] = stbi__get8(s);
                out[z+0] = stbi__get8(s);
                z += 3;
-               a = (easy == 2 ? stbi__get8(s) : 255);
+               a = (easy == 2 ? (stbi__get8(s) | alpha_override) : 255);
                all_a |= a;
                if (target == 4) out[z++] = a;
             }

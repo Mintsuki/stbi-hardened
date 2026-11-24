@@ -7512,30 +7512,30 @@ static char *stbi__hdr_gettoken(stbi__context *z, char *buffer)
    return buffer;
 }
 
-static void stbi__hdr_convert(float *output, stbi_uc *input, int req_comp)
+static void stbi__hdr_convert(float *output, stbi_uc *input, int req_comp, float explut[256])
 {
-   if ( input[3] != 0 ) {
-      float f1;
-      // Exponent
-      f1 = (float) ldexp(1.0f, input[3] - (int)(128 + 8));
-      if (req_comp <= 2)
-         output[0] = (input[0] + input[1] + input[2]) * f1 / 3;
-      else {
-         output[0] = input[0] * f1;
-         output[1] = input[1] * f1;
-         output[2] = input[2] * f1;
-      }
+   float scale = explut[input[3]];
+   if (req_comp <= 2) {
+      output[0] = (input[0] + input[1] + input[2] + 1.5f) * scale;
       if (req_comp == 2) output[1] = 1;
-      if (req_comp == 4) output[3] = 1;
    } else {
-      switch (req_comp) {
-         case 4: output[3] = 1; /* fallthrough */
-         case 3: output[0] = output[1] = output[2] = 0;
-                 break;
-         case 2: output[1] = 1; /* fallthrough */
-         case 1: output[0] = 0;
-                 break;
-      }
+      output[0] = (input[0] + 0.5f) * scale;
+      output[1] = (input[1] + 0.5f) * scale;
+      output[2] = (input[2] + 0.5f) * scale;
+      if (req_comp == 4) output[3] = 1;
+   }
+}
+
+static void stbi__hdr_makelut(float explut[256], int req_comp)
+{
+   int k;
+
+   explut[0] = 0.0f; // exponent 0 always gives 0.0f
+   for (k = 1; k < 256; ++k) {
+      explut[k] = (float) ldexp(1.0, k - (128 + 8));
+      // when req_comp <= 2, we convert to grayscale instead by averaging the three channels;
+      // fold the /3 into the scale factor
+      if (req_comp <= 2) explut[k] /= 3.f;
    }
 }
 
@@ -7596,6 +7596,9 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
    if (!hdr_data)
       return stbi__errpf("outofmem", "Out of memory");
 
+   float explut[256];
+   stbi__hdr_makelut(explut, req_comp);
+
    // Load image data
    // image data is stored as some number of sca
    if ( width < 8 || width >= 32768) {
@@ -7608,7 +7611,7 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
                STBI_FREE(hdr_data);
                return stbi__errpf("bad HDR", "Truncated HDR scanline");
             }
-            stbi__hdr_convert(hdr_data + j * width * req_comp + i * req_comp, rgbe, req_comp);
+            stbi__hdr_convert(hdr_data + j * width * req_comp + i * req_comp, rgbe, req_comp, explut);
          }
       }
    } else {
@@ -7627,7 +7630,7 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
             rgbe[1] = (stbi_uc) c2;
             rgbe[2] = (stbi_uc) len;
             rgbe[3] = (stbi_uc) stbi__get8(s);
-            stbi__hdr_convert(hdr_data, rgbe, req_comp);
+            stbi__hdr_convert(hdr_data, rgbe, req_comp, explut);
             i = 1;
             j = 0;
             STBI_FREE(scanline);
@@ -7665,7 +7668,7 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
             }
          }
          for (i=0; i < width; ++i)
-            stbi__hdr_convert(hdr_data+(j*width + i)*req_comp, scanline + i*4, req_comp);
+            stbi__hdr_convert(hdr_data+(j*width + i)*req_comp, scanline + i*4, req_comp, explut);
       }
       if (scanline)
          STBI_FREE(scanline);

@@ -6995,7 +6995,10 @@ static stbi_uc *stbi__process_gif_raster(stbi__context *s, stbi__gif *g)
    stbi__gif_lzw *p;
 
    lzw_cs = stbi__get8(s);
-   if (lzw_cs > 12) return NULL;
+   // GIF89a spec: cs should correspond to number of actual pixel values, but 1-bit
+   // images need to signal 2. we don't support literals >8 bits, so legal range is
+   // [2,8].
+   if (lzw_cs < 2 || lzw_cs > 8) return stbi__errpuc("bad code size", "Corrupt GIF");
    clear = 1 << lzw_cs;
    first = 1;
    codesize = lzw_cs + 1;
@@ -7073,7 +7076,7 @@ static stbi_uc *stbi__process_gif_raster(stbi__context *s, stbi__gif *g)
 
 // this function is designed to support animated gifs, although stb_image doesn't support it
 // two back is the image from two frames ago, used for a very specific disposal format
-static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, int req_comp, stbi_uc *two_back)
+static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, int req_comp, stbi_uc *saved)
 {
    int dispose;
    int first_frame;
@@ -7109,14 +7112,14 @@ static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, i
       dispose = (g->eflags & 0x1C) >> 2;
       pcount = g->w * g->h;
 
-      if ((dispose == 3) && (two_back == 0)) {
+      if ((dispose == 3) && !saved) {
          dispose = 2; // if I don't have an image to revert back to, default to the old background
       }
 
       if (dispose == 3) { // use previous graphic
          for (pi = 0; pi < pcount; ++pi) {
             if (g->history[pi]) {
-               memcpy( &g->out[pi * 4], &two_back[pi * 4], 4 );
+               memcpy( &g->out[pi * 4], &saved[pi * 4], 4 );
             }
          }
       } else if (dispose == 2) {
@@ -7254,11 +7257,12 @@ static stbi_uc *stbi__gif_load_next(stbi__context *s, stbi__gif *g, int *comp, i
    }
 }
 
-static void *stbi__load_gif_main_outofmem(stbi__gif *g, stbi_uc *out, int **delays)
+static void *stbi__load_gif_main_outofmem(stbi__gif *g, stbi_uc *out, int **delays, stbi_uc *saved_pixels)
 {
    STBI_FREE(g->out);
    STBI_FREE(g->history);
    STBI_FREE(g->background);
+   STBI_FREE(saved_pixels);
 
    if (out) STBI_FREE(out);
    if (delays && *delays) { STBI_FREE(*delays); *delays = NULL; }
@@ -7271,7 +7275,7 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
       int layers = 0;
       stbi_uc *u = 0;
       stbi_uc *out = 0;
-      stbi_uc *two_back = 0;
+      stbi_uc *saved_pixels = 0;
       // heap-allocate the ~80KB stbi__gif to keep this stack frame small
       stbi__gif *g = (stbi__gif *) stbi__malloc(sizeof(stbi__gif));
       int stride;
@@ -7291,19 +7295,19 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
       }
 
       do {
-         u = stbi__gif_load_next(s, g, comp, req_comp, two_back);
+         u = stbi__gif_load_next(s, g, comp, req_comp, saved_pixels);
          if (u == (stbi_uc *) s) u = 0;  // end of animated gif marker
 
          if (u) {
             *x = g->w;
             *y = g->h;
             if (g->w <= 0 || g->h <= 0) {
-               void *r = stbi__load_gif_main_outofmem(g, out, delays);
+               void *r = stbi__load_gif_main_outofmem(g, out, delays, saved_pixels);
                STBI_FREE(g);
                return r;
             }
             if (!stbi__mad3sizes_valid(4, g->w, g->h, 0)) {
-               void *r = stbi__load_gif_main_outofmem(g, out, delays);
+               void *r = stbi__load_gif_main_outofmem(g, out, delays, saved_pixels);
                STBI_FREE(g);
                return r;
             }
@@ -7311,12 +7315,12 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
 
             // refuse if one more frame would overflow layers*stride or layers*sizeof(int)
             if (layers >= INT_MAX / (stride > 0 ? stride : 1)) {
-               void *r = stbi__load_gif_main_outofmem(g, out, delays);
+               void *r = stbi__load_gif_main_outofmem(g, out, delays, saved_pixels);
                STBI_FREE(g);
                return r;
             }
             if ((size_t)(layers + 1) > (size_t)INT_MAX / sizeof(int)) {
-               void *r = stbi__load_gif_main_outofmem(g, out, delays);
+               void *r = stbi__load_gif_main_outofmem(g, out, delays, saved_pixels);
                STBI_FREE(g);
                return r;
             }
@@ -7325,7 +7329,7 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
             if (out) {
                void *tmp = (stbi_uc*) STBI_REALLOC_SIZED( out, out_size, (size_t)layers * (size_t)stride );
                if (!tmp) {
-                  void *r = stbi__load_gif_main_outofmem(g, out, delays);
+                  void *r = stbi__load_gif_main_outofmem(g, out, delays, saved_pixels);
                   STBI_FREE(g);
                   return r;
                }
@@ -7337,7 +7341,7 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
                if (delays) {
                   int *new_delays = (int*) STBI_REALLOC_SIZED( *delays, delays_size, sizeof(int) * (size_t)layers );
                   if (!new_delays) {
-                     void *r = stbi__load_gif_main_outofmem(g, out, delays);
+                     void *r = stbi__load_gif_main_outofmem(g, out, delays, saved_pixels);
                      STBI_FREE(g);
                      return r;
                   }
@@ -7347,7 +7351,7 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
             } else {
                out = (stbi_uc*)stbi__malloc( (size_t)layers * (size_t)stride );
                if (!out) {
-                  void *r = stbi__load_gif_main_outofmem(g, out, delays);
+                  void *r = stbi__load_gif_main_outofmem(g, out, delays, saved_pixels);
                   STBI_FREE(g);
                   return r;
                }
@@ -7355,7 +7359,7 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
                if (delays) {
                   *delays = (int*) stbi__malloc( (size_t)layers * sizeof(int) );
                   if (!*delays) {
-                     void *r = stbi__load_gif_main_outofmem(g, out, delays);
+                     void *r = stbi__load_gif_main_outofmem(g, out, delays, saved_pixels);
                      STBI_FREE(g);
                      return r;
                   }
@@ -7363,15 +7367,24 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
                }
             }
             memcpy( out + ((size_t)(layers - 1) * (size_t)stride), u, stride );
-            if (layers >= 2) {
-               // two_back is the frame two iterations before the next one to
-               // decode; we've just written (layers-1), so two-back is at
-               // (layers-2) relative to the start of out.
-               two_back = out + ((size_t)(layers - 2) * (size_t)stride);
-            }
 
             if (delays) {
                (*delays)[layers - 1] = g->delay;
+            }
+
+            // if this frame is not in "restore to previous" disposal mode (which "un-paints" it),
+            // it becomes the next reference frame. Keep a private copy: `out` is
+            // realloc'd as layers grow, so pointers into it would dangle.
+            if ((g->eflags & 0x1c) != 0x0c) {
+               if (!saved_pixels) {
+                  saved_pixels = (stbi_uc *) stbi__malloc((size_t)stride);
+                  if (!saved_pixels) {
+                     void *r = stbi__load_gif_main_outofmem(g, out, delays, saved_pixels);
+                     STBI_FREE(g);
+                     return r;
+                  }
+               }
+               memcpy(saved_pixels, u, (size_t)stride);
             }
          }
       } while (u != 0);
@@ -7380,6 +7393,7 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
       STBI_FREE(g->out);
       STBI_FREE(g->history);
       STBI_FREE(g->background);
+      STBI_FREE(saved_pixels);
 
       // do the final conversion after loading everything;
       if (req_comp && req_comp != 4) {

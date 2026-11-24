@@ -7896,11 +7896,15 @@ static int      stbi__pnm_test(stbi__context *s)
 static void *stbi__pnm_load(stbi__context *s, int *x, int *y, int *comp, int req_comp, stbi__result_info *ri)
 {
    stbi_uc *out;
+   int maxv;
    STBI_NOTUSED(ri);
 
-   ri->bits_per_channel = stbi__pnm_info(s, (int *)&s->img_x, (int *)&s->img_y, (int *)&s->img_n);
-   if (ri->bits_per_channel == 0)
-      return 0;
+   {
+      int bpc = stbi__pnm_info_ex(s, (int *)&s->img_x, (int *)&s->img_y, (int *)&s->img_n, &maxv);
+      ri->bits_per_channel = bpc;
+      if (bpc == 0)
+         return 0;
+   }
 
    if (s->img_y > STBI_MAX_DIMENSIONS) return stbi__errpuc("too large","Very large image (corrupt?)");
    if (s->img_x > STBI_MAX_DIMENSIONS) return stbi__errpuc("too large","Very large image (corrupt?)");
@@ -7927,6 +7931,30 @@ static void *stbi__pnm_load(stbi__context *s, int *x, int *y, int *comp, int req
       stbi__uint32 nsmp = (stbi__uint32)s->img_n * (stbi__uint32)s->img_x * (stbi__uint32)s->img_y;
       for (i = 0; i < nsmp; ++i, ++out16, cur += 2)
          *out16 = (stbi__uint16)((cur[0] << 8) | cur[1]);
+   }
+
+   // rescale when maxval is not the full range of the output depth
+   {
+      stbi__uint32 i;
+      stbi__uint32 nvals = (stbi__uint32)s->img_n * (stbi__uint32)s->img_x * (stbi__uint32)s->img_y;
+      int expected_maxv = (ri->bits_per_channel == 8) ? 255 : 65535;
+      if (ri->bits_per_channel == 16) {
+         stbi__uint16 *out16 = (stbi__uint16 *) out;
+         for (i = 0; i < nvals; ++i) {
+            stbi__uint32 val = out16[i];
+            if (maxv != expected_maxv) {
+               if (val >= (stbi__uint32)maxv) val = maxv - 1;
+               val = (val * expected_maxv) / maxv;
+            }
+            out16[i] = (stbi__uint16)val;
+         }
+      } else if (maxv != expected_maxv) {
+         for (i = 0; i < nvals; ++i) {
+            int val = out[i];
+            if (val >= maxv) val = maxv - 1;
+            out[i] = (stbi_uc)((val * expected_maxv) / maxv);
+         }
+      }
    }
 
    if (req_comp && req_comp != s->img_n) {
@@ -7978,7 +8006,7 @@ static int      stbi__pnm_getinteger(stbi__context *s, char *c)
    return value;
 }
 
-static int      stbi__pnm_info(stbi__context *s, int *x, int *y, int *comp)
+static int      stbi__pnm_info_ex(stbi__context *s, int *x, int *y, int *comp, int *maxval_out)
 {
    int maxv, dummy;
    char c, p, t;
@@ -7986,6 +8014,7 @@ static int      stbi__pnm_info(stbi__context *s, int *x, int *y, int *comp)
    if (!x) x = &dummy;
    if (!y) y = &dummy;
    if (!comp) comp = &dummy;
+   if (!maxval_out) maxval_out = &dummy;
 
    stbi__rewind(s);
 
@@ -8015,10 +8044,16 @@ static int      stbi__pnm_info(stbi__context *s, int *x, int *y, int *comp)
    maxv = stbi__pnm_getinteger(s, &c);  // read max value
    if (maxv > 65535)
       return stbi__err("max value > 65535", "PPM image supports only 8-bit and 16-bit images");
-   else if (maxv > 255)
+   *maxval_out = maxv;
+   if (maxv > 255)
       return 16;
    else
       return 8;
+}
+
+static int      stbi__pnm_info(stbi__context *s, int *x, int *y, int *comp)
+{
+   return stbi__pnm_info_ex(s, x, y, comp, NULL);
 }
 
 static int stbi__pnm_is16(stbi__context *s)
